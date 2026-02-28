@@ -2,7 +2,7 @@
 
 import random
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, Form
 from pydantic import BaseModel
 
 from config import supabase
@@ -86,6 +86,33 @@ async def get_room_code(
             if clean_username in player_list:
                 return {"status": "ok", "room_id": room["room_id"]}
         raise HTTPException(status_code=404, detail="No active room found for this user")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/{room_id}")
+async def get_room(room_id: str) -> dict:
+    """Fetch the current state of a room."""
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    clean_room = room_id.strip()
+    if not clean_room:
+        raise HTTPException(status_code=400, detail="room_id must be non-empty")
+
+    try:
+        result = (
+            supabase.table("game_lobby")
+            .select("*")
+            .eq("room_id", clean_room)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Room not found")
+        return {"status": "ok", "room": result.data[0]}
     except HTTPException:
         raise
     except Exception as e:
