@@ -156,3 +156,69 @@ async def get_round_vocals(
         "players": players,
         "files": keys,
     }
+
+
+@router.post("/upload/avatar")
+async def upload_avatar(
+    avatar: UploadFile = File(..., description="PNG avatar image"),
+    username: str = Form(..., description="Player username"),
+) -> dict:
+    """
+    Upload an avatar PNG to S3.
+    Stored as: avatar_{username}.png
+    """
+    if s3_client is None or not S3_BUCKET_NAME:
+        raise HTTPException(status_code=503, detail="S3 not configured")
+
+    clean_username = username.strip()
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="username must be non-empty")
+
+    content = await avatar.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="avatar file is empty")
+
+    s3_key = f"avatar_{clean_username}.png"
+    content_type = "image/png"
+
+    try:
+        s3_url = await asyncio.to_thread(_upload_to_s3_sync, content, s3_key, content_type)
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=f"S3 upload failed: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    return {"status": "ok", "url": s3_url, "s3_key": s3_key}
+
+
+@router.get("/avatar")
+async def get_avatar(
+    username: str = Query(..., description="Player username"),
+) -> Response:
+    """
+    Download a player's avatar PNG from S3.
+    Fetches: avatar_{username}.png
+    """
+    if s3_client is None or not S3_BUCKET_NAME:
+        raise HTTPException(status_code=503, detail="S3 not configured")
+
+    clean_username = username.strip()
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="username must be non-empty")
+
+    s3_key = f"avatar_{clean_username}.png"
+
+    try:
+        file_bytes, content_type = await asyncio.to_thread(_download_from_s3_sync, s3_key)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "NoSuchKey":
+            raise HTTPException(status_code=404, detail=f"Avatar not found: {s3_key}")
+        raise HTTPException(status_code=500, detail=f"S3 download failed: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    return Response(
+        content=file_bytes,
+        media_type="image/png",
+        headers={"Content-Disposition": f'inline; filename="{clean_username}.png"'},
+    )
