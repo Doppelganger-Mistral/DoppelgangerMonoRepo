@@ -1,13 +1,21 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const WS_URL = API_URL.replace(/^http/, "ws");
 
-export default function RoomPage() {
+export default function RoomPageWrapper() {
+  return (
+    <Suspense>
+      <RoomPage />
+    </Suspense>
+  );
+}
+
+function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const searchParams = useSearchParams();
   const router = useRouter();

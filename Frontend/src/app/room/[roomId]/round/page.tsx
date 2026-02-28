@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { Suspense, useState, useRef, useEffect, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { useParams, useSearchParams } from "next/navigation";
 
@@ -14,7 +14,15 @@ interface PlayerAudio {
   blobUrl: string;
 }
 
-export default function RoundPage() {
+export default function RoundPageWrapper() {
+  return (
+    <Suspense>
+      <RoundPage />
+    </Suspense>
+  );
+}
+
+function RoundPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const searchParams = useSearchParams();
 
