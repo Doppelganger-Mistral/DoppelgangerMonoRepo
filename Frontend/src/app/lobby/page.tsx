@@ -70,19 +70,9 @@ export default function Lobby() {
         return;
       }
 
-      await res.json();
+      const data = await res.json();
       setCreating(false);
-
-      const codeRes = await fetch(
-        `${API_URL}/room/code?username=${encodeURIComponent(username)}`
-      );
-      if (!codeRes.ok) {
-        const body = await codeRes.json().catch(() => null);
-        setCreateError(body?.detail ?? "Room created but failed to fetch code");
-        return;
-      }
-      const codeData = await codeRes.json();
-      setCreatedRoomCode(codeData.room_id);
+      setCreatedRoomCode(data.room_id);
       setShowRoomCode(true);
     } catch {
       setCreateError("Could not reach the server");
