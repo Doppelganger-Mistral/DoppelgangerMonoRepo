@@ -45,9 +45,29 @@ async def create_room(body: CreateRoomRequest) -> dict:
     if max_players < 2:
         raise HTTPException(status_code=400, detail="max_players must be at least 2")
 
-    room_id = str(random.randint(100000, 999999))
-
+    # Generate a globally unique 6-digit room id by checking the DB for
+    # collisions. Retry a bounded number of times to avoid infinite loops.
+    MAX_ATTEMPTS = 1000
+    attempt = 0
+    room_id = None
     try:
+        while attempt < MAX_ATTEMPTS:
+            candidate = str(random.randint(100000, 999999))
+            exists = (
+                supabase.table("game_lobby")
+                .select("room_id")
+                .eq("room_id", candidate)
+                .limit(1)
+                .execute()
+            )
+            if not exists.data:
+                room_id = candidate
+                break
+            attempt += 1
+
+        if room_id is None:
+            raise HTTPException(status_code=500, detail="Exhausted room id space; try again later")
+
         result = supabase.table("game_lobby").insert({
             "room_id": room_id,
             "player_list": [clean_username],
