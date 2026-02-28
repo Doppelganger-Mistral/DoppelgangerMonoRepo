@@ -2,19 +2,27 @@
 
 import random
 
-from fastapi import APIRouter, Form, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from config import supabase
 from websocket_manager import room_manager
+
+
+class CreateRoomRequest(BaseModel):
+    username: str
+    max_players: int
+
+
+class JoinRoomRequest(BaseModel):
+    room_id: str
+    username: str
 
 router = APIRouter(prefix="/room", tags=["Room"])
 
 
 @router.post("/create")
-async def create_room(
-    username: str = Form(..., description="Host player's username"),
-    max_players: int = Form(..., description="Maximum number of players allowed"),
-) -> dict:
+async def create_room(body: CreateRoomRequest) -> dict:
     """
     Create a new game room.
     Generates a 6-digit room code, inserts into game_lobby with
@@ -23,7 +31,8 @@ async def create_room(
     if supabase is None:
         raise HTTPException(status_code=503, detail="Database not configured")
 
-    clean_username = username.strip()
+    clean_username = body.username.strip()
+    max_players = body.max_players
     if not clean_username:
         raise HTTPException(status_code=400, detail="username must be non-empty")
     if max_players < 2:
@@ -68,15 +77,15 @@ async def get_room_code(
     try:
         result = (
             supabase.table("game_lobby")
-            .select("room_id")
-            .contains("player_list", [clean_username])
+            .select("room_id, player_list")
             .eq("game_state", True)
-            .limit(1)
             .execute()
         )
-        if not result.data:
-            raise HTTPException(status_code=404, detail="No active room found for this user")
-        return {"status": "ok", "room_id": result.data[0]["room_id"]}
+        for room in result.data or []:
+            player_list = room.get("player_list") or []
+            if clean_username in player_list:
+                return {"status": "ok", "room_id": room["room_id"]}
+        raise HTTPException(status_code=404, detail="No active room found for this user")
     except HTTPException:
         raise
     except Exception as e:
@@ -84,10 +93,7 @@ async def get_room_code(
 
 
 @router.post("/join")
-async def join_room(
-    room_id: str = Form(..., description="6-digit room code"),
-    username: str = Form(..., description="Player's username"),
-) -> dict:
+async def join_room(body: JoinRoomRequest) -> dict:
     """
     Join an existing game room.
     Validates room exists, checks capacity, appends player, broadcasts via WebSocket.
@@ -95,8 +101,8 @@ async def join_room(
     if supabase is None:
         raise HTTPException(status_code=503, detail="Database not configured")
 
-    clean_room = room_id.strip()
-    clean_username = username.strip()
+    clean_room = body.room_id.strip()
+    clean_username = body.username.strip()
     if not clean_room or not clean_username:
         raise HTTPException(status_code=400, detail="room_id and username must be non-empty")
 
