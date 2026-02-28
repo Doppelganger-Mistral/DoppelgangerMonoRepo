@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from config import supabase
 from websocket_manager import room_manager
+from orchestrator import get_next_prompt
 
 
 class CreateRoomRequest(BaseModel):
@@ -311,6 +312,9 @@ async def next_round(
             "players": player_list,
         })
 
+        # does this call need to be made async?
+        round_prompt = get_next_prompt()
+
         return {
             "status": "ok",
             "room_id": clean_room,
@@ -318,6 +322,7 @@ async def next_round(
             "max_rounds": max_rounds,
             "assignments": assignments,
             "players": player_list,
+            "round_prompt": "placeholder. can't find API key bro",
         }
     except HTTPException:
         raise
@@ -399,6 +404,44 @@ async def get_final_leaderboard(
         sorted_scores = dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
         return {"status": "ok", "leaderboard": sorted_scores}
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/assigned_player")
+async def get_assigned_player(
+    room_id: str = Query(..., description="6-digit room code"),
+    username: str = Query(..., description="Player's username"),
+) -> dict:
+    """Returns the player assigned to the given username for the current round."""
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    clean_room = room_id.strip()
+    clean_username = username.strip()
+    if not clean_room or not clean_username:
+        raise HTTPException(status_code=400, detail="room_id and username must be non-empty")
+
+    try:
+        result = (
+            supabase.table("rounds")
+            .select("assigned_player, round_num")
+            .eq("room_id", clean_room)
+            .eq("player", clean_username)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="No round data found for this player in this room")
+
+        return {
+            "status": "ok",
+            "username": clean_username,
+            "assigned_player": result.data[0]["assigned_player"],
+            "round_num": result.data[0]["round_num"],
+        }
     except HTTPException:
         raise
     except Exception as e:
