@@ -178,7 +178,6 @@ async def room_websocket(websocket: WebSocket, room_id: str):
         room_manager.disconnect(room_id, websocket)
 
 
-
 @router.post("/next_round")
 async def next_round(
     room_id: str = Form(..., description="6-digit room code"),
