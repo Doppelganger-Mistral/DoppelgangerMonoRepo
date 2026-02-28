@@ -1,5 +1,6 @@
 """Room management routes – create, join, get code, WebSocket."""
 
+import json
 import random
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from config import supabase
 from websocket_manager import room_manager
+from orchestrator import get_next_prompt
 
 
 class CreateRoomRequest(BaseModel):
@@ -215,12 +217,17 @@ async def join_room(body: JoinRoomRequest) -> dict:
 async def room_websocket(websocket: WebSocket, room_id: str):
     """
     WebSocket for real-time room updates.
-    Events: player_joined
+    Relays client messages to all connections in the room.
     """
     await room_manager.connect(room_id, websocket)
     try:
         while True:
-            await websocket.receive_text()
+            text = await websocket.receive_text()
+            try:
+                msg = json.loads(text)
+                await room_manager.broadcast(room_id, msg)
+            except (json.JSONDecodeError, Exception):
+                pass
     except WebSocketDisconnect:
         room_manager.disconnect(room_id, websocket)
 
@@ -317,13 +324,16 @@ async def next_round(
 
             max_rounds = stored_max_rounds  # for the return value
 
-        # # Broadcast to all players in the room that the next round is beginning
-        # await room_manager.broadcast(clean_room, {
-        #     "event": "next_round",
-        #     "round_num": current_round,
-        #     "max_rounds": max_rounds,
-        #     "assignments": assignments,
-        # })
+        await room_manager.broadcast(clean_room, {
+            "event": "game_started",
+            "round_num": current_round,
+            "max_rounds": max_rounds,
+            "assignments": assignments,
+            "players": player_list,
+        })
+
+        # does this call need to be made async?
+        round_prompt = get_next_prompt()
 
         return {
             "status": "ok",
@@ -332,6 +342,7 @@ async def next_round(
             "max_rounds": max_rounds,
             "assignments": assignments,
             "players": player_list,
+            "round_prompt": "placeholder. can't find API key bro",
         }
     except HTTPException:
         raise
@@ -413,6 +424,44 @@ async def get_final_leaderboard(
         sorted_scores = dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
         return {"status": "ok", "leaderboard": sorted_scores}
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/assigned_player")
+async def get_assigned_player(
+    room_id: str = Query(..., description="6-digit room code"),
+    username: str = Query(..., description="Player's username"),
+) -> dict:
+    """Returns the player assigned to the given username for the current round."""
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    clean_room = room_id.strip()
+    clean_username = username.strip()
+    if not clean_room or not clean_username:
+        raise HTTPException(status_code=400, detail="room_id and username must be non-empty")
+
+    try:
+        result = (
+            supabase.table("rounds")
+            .select("assigned_player, round_num")
+            .eq("room_id", clean_room)
+            .eq("player", clean_username)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="No round data found for this player in this room")
+
+        return {
+            "status": "ok",
+            "username": clean_username,
+            "assigned_player": result.data[0]["assigned_player"],
+            "round_num": result.data[0]["round_num"],
+        }
     except HTTPException:
         raise
     except Exception as e:
