@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Converter</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --accent: #e8ff47;
+    --accent2: #ff4776;
+    --text: #f0f0f0;
+    --muted: #555566;
+    --glow: rgba(232, 255, 71, 0.15);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: 
+      radial-gradient(ellipse 60% 40% at 20% 80%, rgba(255, 71, 118, 0.06) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 50% at 80% 20%, rgba(232, 255, 71, 0.05) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .container {
+    width: 420px;
+    padding: 48px 40px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    position: relative;
+  }
+
+  .container::before {
+    content: '';
+    position: absolute;
+    top: -1px; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+  }
+
+  .label {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 52px;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    margin-bottom: 40px;
+    background: linear-gradient(135deg, #fff 0%, var(--accent) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .field {
+    margin-bottom: 24px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .field input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    padding: 12px 16px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .field input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--glow);
+  }
+
+  .field input::placeholder { color: var(--muted); }
+
+  /* Visualizer */
+  .visualizer-wrap {
+    margin-bottom: 32px;
+    position: relative;
+  }
+
+  canvas {
+    width: 100%;
+    height: 72px;
+    display: block;
+    border: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .vis-label {
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  /* Record button */
+  .rec-btn {
+    width: 100%;
+    padding: 16px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .rec-btn:hover {
+    background: var(--glow);
+  }
+
+  .rec-btn.recording {
+    border-color: var(--accent2);
+    color: var(--accent2);
+    animation: pulse-border 1.5s infinite;
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 71, 118, 0.3); }
+    50% { box-shadow: 0 0 0 6px rgba(255, 71, 118, 0); }
+  }
+
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .recording .dot {
+    animation: blink 1s infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* Submit */
+  .submit-btn {
+    width: 100%;
+    padding: 16px;
+    background: var(--accent);
+    border: none;
+    color: #0a0a0f;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+
+  .submit-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  .submit-btn:active { transform: translateY(0); }
+  .submit-btn:disabled {
+    background: var(--border);
+    color: var(--muted);
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Status */
+  .status {
+    margin-top: 20px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    min-height: 20px;
+    text-align: center;
+  }
+
+  .status.error { color: var(--accent2); }
+  .status.success { color: var(--accent); }
+  .status.loading { color: var(--muted); }
+
+  /* Audio playback */
+  .playback {
+    margin-top: 16px;
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .playback.visible { display: flex; }
+
+  .playback .vis-label { margin-bottom: 0; }
+
+  audio {
+    width: 100%;
+    filter: invert(1) hue-rotate(180deg) saturate(0.4);
+  }
+
+  .timer {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 28px 0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <p class="label">Eleven Labs</p>
+  <h1>Voice<br>Convert</h1>
+
+  <div class="field">
+    <label for="username">Username</label>
+    <input type="text" id="username" placeholder="your_username" autocomplete="off" />
+  </div>
+
+  <hr class="divider">
+
+  <div class="visualizer-wrap">
+    <div class="vis-label">Waveform</div>
+    <canvas id="canvas" width="340" height="72"></canvas>
+    <div class="timer" id="timer">00:00</div>
+  </div>
+
+  <button class="rec-btn" id="recBtn">
+    <span class="dot"></span>
+    <span id="recLabel">Start Recording</span>
+  </button>
+
+  <button class="submit-btn" id="submitBtn" disabled>Convert Voice</button>
+
+  <div class="playback" id="playback">
+    <div class="vis-label">Preview</div>
+    <audio id="previewAudio" controls></audio>
+  </div>
+
+  <div class="status" id="status"></div>
+</div>
+
+<script>
+  const recBtn = document.getElementById('recBtn');
+  const recLabel = document.getElementById('recLabel');
+  const submitBtn = document.getElementById('submitBtn');
+  const statusEl = document.getElementById('status');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const timerEl = document.getElementById('timer');
+  const playbackEl = document.getElementById('playback');
+  const previewAudio = document.getElementById('previewAudio');
+
+  let mediaRecorder, audioChunks = [], stream, animFrame;
+  let analyser, dataArray;
+  let isRecording = false;
+  let timerInterval, seconds = 0;
+  let recordedBlob = null;
+
+  // Draw idle flat line
+  drawIdle();
+
+  function drawIdle() {
+    canvas.width = canvas.offsetWidth;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#1e1e2e';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height / 2);
+    ctx.lineTo(canvas.width, canvas.height / 2);
+    ctx.stroke();
+  }
+
+  function drawWaveform() {
+    animFrame = requestAnimationFrame(drawWaveform);
+    canvas.width = canvas.offsetWidth;
+    analyser.getByteTimeDomainData(dataArray);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = isRecording ? '#ff4776' : '#e8ff47';
+    ctx.beginPath();
+
+    const slice = canvas.width / dataArray.length;
+    let x = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      const v = dataArray[i] / 128.0;
+      const y = (v * canvas.height) / 2;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      x += slice;
+    }
+    ctx.stroke();
+  }
+
+  function formatTime(s) {
+    const m = Math.floor(s / 60).toString().padStart(2, '0');
+    const ss = (s % 60).toString().padStart(2, '0');
+    return `${m}:${ss}`;
+  }
+
+  recBtn.addEventListener('click', async () => {
+    if (!isRecording) {
+      // Start recording
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        setStatus('Microphone access denied.', 'error');
+        return;
+      }
+
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+      source.connect(analyser);
+
+      audioChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+      mediaRecorder.onstop = () => {
+        recordedBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        previewAudio.src = URL.createObjectURL(recordedBlob);
+        playbackEl.classList.add('visible');
+        submitBtn.disabled = false;
+        cancelAnimationFrame(animFrame);
+        drawIdle();
+      };
+
+      mediaRecorder.start();
+      isRecording = true;
+      recBtn.classList.add('recording');
+      recLabel.textContent = 'Stop Recording';
+      submitBtn.disabled = true;
+      playbackEl.classList.remove('visible');
+      setStatus('', '');
+
+      seconds = 0;
+      timerEl.textContent = '00:00';
+      timerInterval = setInterval(() => {
+        seconds++;
+        timerEl.textContent = formatTime(seconds);
+      }, 1000);
+
+      drawWaveform();
+    } else {
+      // Stop
+      mediaRecorder.stop();
+      stream.getTracks().forEach(t => t.stop());
+      clearInterval(timerInterval);
+      isRecording = false;
+      recBtn.classList.remove('recording');
+      recLabel.textContent = 'Record Again';
+    }
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const username = document.getElementById('username').value.trim();
+    if (!username) {
+      setStatus('Please enter a username.', 'error');
+      return;
+    }
+    if (!recordedBlob) {
+      setStatus('No audio recorded.', 'error');
+      return;
+    }
+
+    submitBtn.disabled = true;
+    setStatus('Converting voice...', 'loading');
+
+    const formData = new FormData();
+    formData.append('username', username);
+    formData.append('audio', recordedBlob, 'recording.webm');
+
+    try {
+      const res = await fetch('http://127.0.0.1:8000/round/convert', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        setStatus(`Error: ${err || res.statusText}`, 'error');
+      } else {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('audio')) {
+          const blob = await res.blob();
+          previewAudio.src = URL.createObjectURL(blob);
+          setStatus('Conversion complete — listen above ↑', 'success');
+        } else {
+          const text = await res.text();
+          setStatus(`Done: ${text}`, 'success');
+        }
+      }
+    } catch (e) {
+      setStatus(`Network error: ${e.message}`, 'error');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  function setStatus(msg, type) {
+    statusEl.textContent = msg;
+    statusEl.className = 'status ' + type;
+  }
+</script>
+</body>
+</html>
