@@ -18,6 +18,13 @@ class JoinRoomRequest(BaseModel):
     room_id: str
     username: str
 
+
+class CheckMatchRequest(BaseModel):
+    room_id: str
+    round_num: int
+    username: str  # the player submitting their guesses
+    matches: dict[str, str]  # e.g. {"Rahul": "Manoj", "Ishman": "Abishek"}
+
 router = APIRouter(prefix="/room", tags=["Room"])
 
 
@@ -169,3 +176,94 @@ async def room_websocket(websocket: WebSocket, room_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         room_manager.disconnect(room_id, websocket)
+
+
+@router.post("/check-match")
+async def check_match(body: CheckMatchRequest) -> dict:
+    """
+    Check if a player's voice-matching guesses are correct.
+
+    Compares the submitted matches against the actual
+    player → assigned_player mapping in the rounds table
+    for the given room_id and round_num.
+
+    Returns correct count, total, and per-guess results.
+    """
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    if not body.matches:
+        raise HTTPException(status_code=400, detail="matches must be non-empty")
+
+    try:
+        # Each row is one player → assigned_player pair
+        result = (
+            supabase.table("rounds")
+            .select("player, assigned_player")
+            .eq("room_id", body.room_id)
+            .eq("round_num", body.round_num)
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No round found for room_id={body.room_id}, round_num={body.round_num}",
+            )
+
+        # Build actual mapping from rows: {player: assigned_player}
+        actual_mapping = {
+            row["player"]: row["assigned_player"] for row in result.data
+        }
+
+        # Compare each guess
+        results = {}
+        correct = 0
+        for player, guessed_assigned in body.matches.items():
+            actual_assigned = actual_mapping.get(player)
+            is_correct = guessed_assigned == actual_assigned
+            if is_correct:
+                correct += 1
+            results[player] = {
+                "guessed": guessed_assigned,
+                "actual": actual_assigned,
+                "correct": is_correct,
+            }
+
+        total = len(body.matches)
+        score = correct * 100
+
+        # Fetch current round_scores for this player's row
+        player_row = (
+            supabase.table("rounds")
+            .select("id, round_scores")
+            .eq("room_id", body.room_id)
+            .eq("round_num", body.round_num)
+            .eq("player", body.username.strip())
+            .limit(1)
+            .execute()
+        )
+
+        if player_row.data:
+            row = player_row.data[0]
+            existing_scores = row.get("round_scores") or []
+            existing_scores.append(score)
+            supabase.table("rounds").update(
+                {"round_scores": existing_scores}
+            ).eq("id", row["id"]).execute()
+
+        return {
+            "status": "ok",
+            "room_id": body.room_id,
+            "round_num": body.round_num,
+            "username": body.username.strip(),
+            "correct": correct,
+            "total": total,
+            "score": score,
+            "results": results,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
