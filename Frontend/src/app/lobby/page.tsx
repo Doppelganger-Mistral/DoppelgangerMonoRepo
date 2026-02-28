@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 
@@ -32,7 +32,15 @@ function Modal({
   );
 }
 
-export default function Lobby() {
+export default function LobbyPage() {
+  return (
+    <Suspense>
+      <Lobby />
+    </Suspense>
+  );
+}
+
+function Lobby() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const username = searchParams.get("username") ?? "";

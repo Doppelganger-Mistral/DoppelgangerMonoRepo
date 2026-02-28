@@ -1,5 +1,6 @@
 """Room management routes – create, join, get code, WebSocket."""
 
+import json
 import random
 import asyncio
 
@@ -197,12 +198,17 @@ async def join_room(body: JoinRoomRequest) -> dict:
 async def room_websocket(websocket: WebSocket, room_id: str):
     """
     WebSocket for real-time room updates.
-    Events: player_joined
+    Relays client messages to all connections in the room.
     """
     await room_manager.connect(room_id, websocket)
     try:
         while True:
-            await websocket.receive_text()
+            text = await websocket.receive_text()
+            try:
+                msg = json.loads(text)
+                await room_manager.broadcast(room_id, msg)
+            except (json.JSONDecodeError, Exception):
+                pass
     except WebSocketDisconnect:
         room_manager.disconnect(room_id, websocket)
 
@@ -299,13 +305,13 @@ async def next_round(
 
             max_rounds = stored_max_rounds  # for the return value
 
-        # # Broadcast to all players in the room that the next round is beginning
-        # await room_manager.broadcast(clean_room, {
-        #     "event": "next_round",
-        #     "round_num": current_round,
-        #     "max_rounds": max_rounds,
-        #     "assignments": assignments,
-        # })
+        await room_manager.broadcast(clean_room, {
+            "event": "game_started",
+            "round_num": current_round,
+            "max_rounds": max_rounds,
+            "assignments": assignments,
+            "players": player_list,
+        })
 
         # does this call need to be made async?
         round_prompt = await asyncio.to_thread(get_next_prompt)

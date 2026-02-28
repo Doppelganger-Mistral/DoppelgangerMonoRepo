@@ -6,3 +6,4 @@ uvicorn[standard]
 requests
 supabase
 boto3
+mistralai

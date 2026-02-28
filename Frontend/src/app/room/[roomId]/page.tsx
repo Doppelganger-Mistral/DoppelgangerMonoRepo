@@ -1,23 +1,36 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
 import Image from "next/image";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const WS_URL = API_URL.replace(/^http/, "ws");
 
-export default function RoomPage() {
+export default function RoomPageWrapper() {
+  return (
+    <Suspense>
+      <RoomPage />
+    </Suspense>
+  );
+}
+
+function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const username = searchParams.get("username") ?? "";
 
   const [players, setPlayers] = useState<string[]>([]);
+  const [host, setHost] = useState("");
   const [maxPlayers, setMaxPlayers] = useState(0);
   const [rounds, setRounds] = useState("3");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [starting, setStarting] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const isHost = username === host;
 
   useEffect(() => {
     let cancelled = false;
@@ -33,7 +46,9 @@ export default function RoomPage() {
         }
         const data = await res.json();
         const room = data.room;
-        setPlayers(room.player_list ?? []);
+        const playerList = room.player_list ?? [];
+        setPlayers(playerList);
+        setHost(playerList[0] ?? "");
         setMaxPlayers(room.max_players ?? 0);
         setLoading(false);
       } catch {
@@ -58,6 +73,17 @@ export default function RoomPage() {
         if (msg.event === "player_joined" && msg.player_list) {
           setPlayers(msg.player_list);
         }
+        if (msg.event === "game_started") {
+          const assignedPlayer = msg.assignments?.[username] ?? "";
+          const params = new URLSearchParams({
+            username,
+            round: String(msg.round_num),
+            maxRounds: String(msg.max_rounds),
+            assignedPlayer,
+            players: JSON.stringify(msg.players),
+          });
+          router.push(`/room/${roomId}/round?${params.toString()}`);
+        }
       } catch {
         // ignore malformed messages
       }
@@ -72,8 +98,39 @@ export default function RoomPage() {
     };
   }, [roomId]);
 
-  const handleStartGame = () => {
-    console.log("Starting game with", rounds, "rounds");
+  const handleStartGame = async () => {
+    setStarting(true);
+    try {
+      const formData = new FormData();
+      formData.append("room_id", roomId);
+      formData.append("max_rounds", rounds);
+
+      const res = await fetch(`${API_URL}/room/next_round`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.detail ?? "Failed to start game");
+        setStarting(false);
+        return;
+      }
+
+      const data = await res.json();
+      const assignedPlayer = data.assignments?.[username] ?? "";
+      const params = new URLSearchParams({
+        username,
+        round: String(data.round_num),
+        maxRounds: String(data.max_rounds),
+        assignedPlayer,
+        players: JSON.stringify(data.players),
+      });
+      router.push(`/room/${roomId}/round?${params.toString()}`);
+    } catch {
+      setError("Could not reach the server");
+      setStarting(false);
+    }
   };
 
   if (loading) {
@@ -144,33 +201,42 @@ export default function RoomPage() {
           ))}
         </div>
 
-        {/* Rounds selector */}
-        <div className="flex flex-col items-end shrink-0">
-          <label className="font-gordon text-cream text-sm md:text-base uppercase tracking-[0.15em] mb-2">
-            Rounds:
-          </label>
-          <select
-            value={rounds}
-            onChange={(e) => setRounds(e.target.value)}
-            className="px-4 py-2 w-28 bg-transparent border-[1.5px] border-cream rounded-lg font-benguiat text-cream text-lg text-center appearance-none cursor-pointer outline-none focus:border-white focus:shadow-[0_0_12px_rgba(213,206,196,0.15)] transition-all duration-200"
-          >
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n} className="bg-forest text-cream">
-                {n}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* Rounds selector (host only) */}
+        {isHost && (
+          <div className="flex flex-col items-end shrink-0">
+            <label className="font-gordon text-cream text-sm md:text-base uppercase tracking-[0.15em] mb-2">
+              Rounds:
+            </label>
+            <select
+              value={rounds}
+              onChange={(e) => setRounds(e.target.value)}
+              className="px-4 py-2 w-28 bg-transparent border-[1.5px] border-cream rounded-lg font-benguiat text-cream text-lg text-center appearance-none cursor-pointer outline-none focus:border-white focus:shadow-[0_0_12px_rgba(213,206,196,0.15)] transition-all duration-200"
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n} className="bg-forest text-cream">
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
-      {/* Start Game button */}
+      {/* Start Game button (host) or waiting message (others) */}
       <div className="flex justify-end mt-10 md:mt-14">
-        <button
-          onClick={handleStartGame}
-          className="px-8 md:px-12 py-3 md:py-3.5 border-[1.5px] border-cream rounded-lg font-gordon text-cream text-sm md:text-base uppercase tracking-[0.2em] cursor-pointer bg-transparent shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-cream hover:text-forest hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)]"
-        >
-          Start Game
-        </button>
+        {isHost ? (
+          <button
+            onClick={handleStartGame}
+            disabled={starting}
+            className="px-8 md:px-12 py-3 md:py-3.5 border-[1.5px] border-cream rounded-lg font-gordon text-cream text-sm md:text-base uppercase tracking-[0.2em] cursor-pointer bg-transparent shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-cream hover:text-forest hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+          >
+            {starting ? "Starting..." : "Start Game"}
+          </button>
+        ) : (
+          <p className="font-benguiat text-cream/60 text-base md:text-lg italic">
+            Waiting for host to start the game...
+          </p>
+        )}
       </div>
     </main>
   );
