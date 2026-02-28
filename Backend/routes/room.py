@@ -2,7 +2,7 @@
 
 import random
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from config import supabase
@@ -178,112 +178,24 @@ async def room_websocket(websocket: WebSocket, room_id: str):
         room_manager.disconnect(room_id, websocket)
 
 
-<<<<<<< HEAD
-@router.post("/check-match")
-async def check_match(body: CheckMatchRequest) -> dict:
-    """
-    Check if a player's voice-matching guesses are correct.
-
-    Compares the submitted matches against the actual
-    player → assigned_player mapping in the rounds table
-    for the given room_id and round_num.
-
-    Returns correct count, total, and per-guess results.
-=======
 
 @router.post("/next_round")
 async def next_round(
     room_id: str = Form(..., description="6-digit room code"),
-    max_rounds: int = Form(1, description="Maximum number of rounds for the game"),
+    max_rounds: int = Form(None, description="Maximum number of rounds (only required on first call)"),
 ) -> dict:
     """
     Initialize or advance to the next round.
-    - First call: creates round rows for each player (round_num=1).
-    - Subsequent calls: increments round_num for all players in the room.
-    - Randomly assigns each player a unique other player to voice-clone.
->>>>>>> 2db9f650805ce9b952f68cd41fb11a2370089d08
+    - First call: creates round rows for each player (round_num=1). max_rounds required.
+    - Subsequent calls: increments round_num for all players in the room. max_rounds ignored.
+    - Randomly assigns each player a player to voice-clone.
     """
     if supabase is None:
         raise HTTPException(status_code=503, detail="Database not configured")
 
-<<<<<<< HEAD
-    if not body.matches:
-        raise HTTPException(status_code=400, detail="matches must be non-empty")
-
-    try:
-        # Each row is one player → assigned_player pair
-        result = (
-            supabase.table("rounds")
-            .select("player, assigned_player")
-            .eq("room_id", body.room_id)
-            .eq("round_num", body.round_num)
-            .execute()
-        )
-
-        if not result.data:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No round found for room_id={body.room_id}, round_num={body.round_num}",
-            )
-
-        # Build actual mapping from rows: {player: assigned_player}
-        actual_mapping = {
-            row["player"]: row["assigned_player"] for row in result.data
-        }
-
-        # Compare each guess
-        results = {}
-        correct = 0
-        for player, guessed_assigned in body.matches.items():
-            actual_assigned = actual_mapping.get(player)
-            is_correct = guessed_assigned == actual_assigned
-            if is_correct:
-                correct += 1
-            results[player] = {
-                "guessed": guessed_assigned,
-                "actual": actual_assigned,
-                "correct": is_correct,
-            }
-
-        total = len(body.matches)
-        score = correct * 100
-
-        # Fetch current round_scores for this player's row
-        player_row = (
-            supabase.table("rounds")
-            .select("id, round_scores")
-            .eq("room_id", body.room_id)
-            .eq("round_num", body.round_num)
-            .eq("player", body.username.strip())
-            .limit(1)
-            .execute()
-        )
-
-        if player_row.data:
-            row = player_row.data[0]
-            existing_scores = row.get("round_scores") or []
-            existing_scores.append(score)
-            supabase.table("rounds").update(
-                {"round_scores": existing_scores}
-            ).eq("id", row["id"]).execute()
-
-        return {
-            "status": "ok",
-            "room_id": body.room_id,
-            "round_num": body.round_num,
-            "username": body.username.strip(),
-            "correct": correct,
-            "total": total,
-            "score": score,
-            "results": results,
-        }
-
-=======
     clean_room = room_id.strip()
     if not clean_room:
         raise HTTPException(status_code=400, detail="room_id must be non-empty")
-    if max_rounds < 1:
-        raise HTTPException(status_code=400, detail="max_rounds must be at least 1")
 
     # Fetch the room to get the player list
     try:
@@ -300,19 +212,16 @@ async def next_round(
         player_list: list[str] = lobby_result.data[0].get("player_list") or []
         if not player_list:
             raise HTTPException(status_code=400, detail="Room has no players")
->>>>>>> 2db9f650805ce9b952f68cd41fb11a2370089d08
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
-<<<<<<< HEAD
-=======
 
     # Check if round rows already exist for this room
     try:
         existing = (
             supabase.table("rounds")
-            .select("player, round_num")
+            .select("player, round_num, max_rounds")
             .eq("room_id", clean_room)
             .limit(1)
             .execute()
@@ -323,14 +232,13 @@ async def next_round(
 
     shuffled = player_list.copy()
     random.shuffle(shuffled)
-    assignments = {
-        player_list[i]: shuffled[i]
-        for i in range(len(player_list))
-    }
+    assignments = {player_list[i]: shuffled[i] for i in range(len(player_list))}
 
     try:
         if not round_exists:
-            # First round — insert a row per player
+            if max_rounds is None or max_rounds < 1:
+                raise HTTPException(status_code=400, detail="max_rounds is required and must be at least 1 when creating the first round")
+
             rows = [
                 {
                     "room_id": clean_room,
@@ -346,33 +254,22 @@ async def next_round(
             if not result.data:
                 raise HTTPException(status_code=500, detail="Failed to create rounds")
             current_round = 1
-        else:
-            # Subsequent rounds — fetch current round_num, increment, re-assign
-            current_round_result = (
-                supabase.table("rounds")
-                .select("round_num")
-                .eq("room_id", clean_room)
-                .limit(1)
-                .execute()
-            )
-            current_round = current_round_result.data[0]["round_num"] + 1
 
-            if current_round > max_rounds:
+        else:
+            # Read max_rounds from DB — ignore whatever was passed in
+            stored_max_rounds = existing.data[0]["max_rounds"]
+            current_round = existing.data[0]["round_num"] + 1
+
+            if current_round > stored_max_rounds:
                 raise HTTPException(status_code=400, detail="All rounds already completed")
 
-            # Update each player's row with new round_num and new assignment
             for player in player_list:
                 supabase.table("rounds").update({
                     "round_num": current_round,
                     "assigned_player": assignments[player],
                 }).eq("room_id", clean_room).eq("player", player).execute()
 
-            result = (
-                supabase.table("rounds")
-                .select("*")
-                .eq("room_id", clean_room)
-                .execute()
-            )
+            max_rounds = stored_max_rounds  # for the return value
 
         # # Broadcast to all players in the room that the next round is beginning
         # await room_manager.broadcast(clean_room, {
@@ -394,5 +291,83 @@ async def next_round(
         raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
-    
->>>>>>> 2db9f650805ce9b952f68cd41fb11a2370089d08
+
+
+@router.get("/leaderboard")
+async def get_leaderboard(
+    room_id: str = Query(..., description="6-digit room code"),
+    round_num: int = Query(..., description="Round number to fetch scores for"),
+) -> dict:
+    """
+    Returns sorted leaderboard for a specific round.
+    Score is taken from round_scores[round_num - 1] for each player.
+    """
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    clean_room = room_id.strip()
+    if not clean_room:
+        raise HTTPException(status_code=400, detail="room_id must be non-empty")
+
+    try:
+        result = (
+            supabase.table("rounds")
+            .select("player, round_scores")
+            .eq("room_id", clean_room)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="No round data found for this room")
+
+        scores = {}
+        for row in result.data:
+            round_scores = row.get("round_scores") or []
+            idx = round_num - 1
+            score = round_scores[idx] if idx < len(round_scores) else 0
+            scores[row["player"]] = score
+
+        sorted_scores = dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+        return {"status": "ok", "round_num": round_num, "leaderboard": sorted_scores}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/leaderboard/final")
+async def get_final_leaderboard(
+    room_id: str = Query(..., description="6-digit room code"),
+) -> dict:
+    """
+    Returns sorted leaderboard with total score across all rounds.
+    """
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    clean_room = room_id.strip()
+    if not clean_room:
+        raise HTTPException(status_code=400, detail="room_id must be non-empty")
+
+    try:
+        result = (
+            supabase.table("rounds")
+            .select("player, round_scores")
+            .eq("room_id", clean_room)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="No round data found for this room")
+
+        scores = {
+            row["player"]: sum(row.get("round_scores") or [])
+            for row in result.data
+        }
+
+        sorted_scores = dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+        return {"status": "ok", "leaderboard": sorted_scores}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
