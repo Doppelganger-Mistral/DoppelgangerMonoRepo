@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { useSearchParams, useRouter } from "next/navigation";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function Modal({
   open,
@@ -30,23 +33,97 @@ function Modal({
 }
 
 export default function Lobby() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const username = searchParams.get("username") ?? "";
+
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
   const [maxPlayers, setMaxPlayers] = useState("");
   const [roomCode, setRoomCode] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [createdRoomCode, setCreatedRoomCode] = useState("");
+  const [showRoomCode, setShowRoomCode] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const handleCreateRoom = () => {
-    if (!maxPlayers || Number(maxPlayers) < 2) return;
-    console.log("Creating room with max players:", maxPlayers);
-    setShowCreate(false);
-    setMaxPlayers("");
+  const handleCreateRoom = async () => {
+    if (!maxPlayers || Number(maxPlayers) < 2 || !username) return;
+
+    setCreating(true);
+    setCreateError("");
+
+    try {
+      const res = await fetch(`${API_URL}/room/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          max_players: Number(maxPlayers),
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setCreateError(body?.detail ?? "Failed to create room");
+        setCreating(false);
+        return;
+      }
+
+      await res.json();
+      setCreating(false);
+
+      const codeRes = await fetch(
+        `${API_URL}/room/code?username=${encodeURIComponent(username)}`
+      );
+      if (!codeRes.ok) {
+        const body = await codeRes.json().catch(() => null);
+        setCreateError(body?.detail ?? "Room created but failed to fetch code");
+        return;
+      }
+      const codeData = await codeRes.json();
+      setCreatedRoomCode(codeData.room_id);
+      setShowRoomCode(true);
+    } catch {
+      setCreateError("Could not reach the server");
+      setCreating(false);
+    }
   };
 
-  const handleJoinRoom = () => {
-    if (roomCode.length !== 6) return;
-    console.log("Joining room:", roomCode);
-    setShowJoin(false);
-    setRoomCode("");
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState("");
+
+  const handleJoinRoom = async () => {
+    if (roomCode.length !== 6 || !username) return;
+
+    setJoining(true);
+    setJoinError("");
+
+    try {
+      const res = await fetch(`${API_URL}/room/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room_id: roomCode,
+          username,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setJoinError(body?.detail ?? "Failed to join room");
+        setJoining(false);
+        return;
+      }
+
+      setShowJoin(false);
+      setRoomCode("");
+      setJoining(false);
+      router.push(`/room/${roomCode}?username=${encodeURIComponent(username)}`);
+    } catch {
+      setJoinError("Could not reach the server");
+      setJoining(false);
+    }
   };
 
   const inputClasses =
@@ -97,42 +174,87 @@ export default function Lobby() {
       </div>
 
       {/* Create Room Modal */}
-      <Modal open={showCreate} onClose={() => setShowCreate(false)}>
-        <h2
-          className="font-gordon text-cream uppercase text-center drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)]"
-          style={{ fontSize: "clamp(1.4rem, 2.5vw, 2rem)" }}
-        >
-          Create Room
-        </h2>
-        <p className="font-benguiat text-white/80 text-center text-sm mt-2">
-          How many players can join?
-        </p>
-        <select
-          value={maxPlayers}
-          onChange={(e) => setMaxPlayers(e.target.value)}
-          className={`${inputClasses} appearance-none cursor-pointer`}
-          autoFocus
-        >
-          <option value="" disabled className="bg-forest text-cream/40">
-            Select max players
-          </option>
-          {[3, 4, 5, 6, 7].map((n) => (
-            <option key={n} value={n} className="bg-forest text-cream">
-              {n} Players
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={handleCreateRoom}
-          disabled={!maxPlayers}
-          className={`${modalBtnClasses} bg-cream text-forest hover:bg-transparent hover:text-cream disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100`}
-        >
-          Create
-        </button>
+      <Modal open={showCreate} onClose={() => { if (!showRoomCode) { setShowCreate(false); setCreateError(""); } }}>
+        {!showRoomCode ? (
+          <>
+            <h2
+              className="font-gordon text-cream uppercase text-center drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)]"
+              style={{ fontSize: "clamp(1.4rem, 2.5vw, 2rem)" }}
+            >
+              Create Room
+            </h2>
+            <p className="font-benguiat text-white/80 text-center text-sm mt-2">
+              How many players can join?
+            </p>
+            <select
+              value={maxPlayers}
+              onChange={(e) => setMaxPlayers(e.target.value)}
+              className={`${inputClasses} appearance-none cursor-pointer`}
+              autoFocus
+            >
+              <option value="" disabled className="bg-forest text-cream/40">
+                Select max players
+              </option>
+              {[3, 4, 5, 6, 7].map((n) => (
+                <option key={n} value={n} className="bg-forest text-cream">
+                  {n} Players
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleCreateRoom}
+              disabled={!maxPlayers || creating}
+              className={`${modalBtnClasses} bg-cream text-forest hover:bg-transparent hover:text-cream disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100`}
+            >
+              {creating ? "Creating..." : "Create"}
+            </button>
+            {createError && (
+              <p className="font-benguiat text-red-400 text-sm text-center mt-3">
+                {createError}
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <h2
+              className="font-gordon text-cream uppercase text-center drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)]"
+              style={{ fontSize: "clamp(1.4rem, 2.5vw, 2rem)" }}
+            >
+              Room Created
+            </h2>
+            <p className="font-benguiat text-white/80 text-center text-sm mt-2">
+              Share this code with other players
+            </p>
+            <p className="font-gordon text-cream text-center text-4xl md:text-5xl tracking-[0.3em] mt-6 select-all">
+              {createdRoomCode}
+            </p>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(createdRoomCode);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className={`${modalBtnClasses} bg-transparent text-cream hover:bg-cream hover:text-forest`}
+            >
+              {copied ? "Copied!" : "Copy Code"}
+            </button>
+            <button
+              onClick={() => {
+                setShowCreate(false);
+                setShowRoomCode(false);
+                setMaxPlayers("");
+                router.push(`/room/${createdRoomCode}?username=${encodeURIComponent(username)}`);
+              }}
+              className={`${modalBtnClasses} bg-cream text-forest hover:bg-transparent hover:text-cream`}
+            >
+              Enter Room
+            </button>
+          </>
+        )}
       </Modal>
 
       {/* Join Room Modal */}
-      <Modal open={showJoin} onClose={() => setShowJoin(false)}>
+      <Modal open={showJoin} onClose={() => { setShowJoin(false); setJoinError(""); }}>
         <h2
           className="font-gordon text-cream uppercase text-center drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)]"
           style={{ fontSize: "clamp(1.4rem, 2.5vw, 2rem)" }}
@@ -150,6 +272,7 @@ export default function Lobby() {
           onChange={(e) => {
             const val = e.target.value.replace(/\D/g, "");
             if (val.length <= 6) setRoomCode(val);
+            if (joinError) setJoinError("");
           }}
           placeholder="000000"
           className={inputClasses}
@@ -157,11 +280,16 @@ export default function Lobby() {
         />
         <button
           onClick={handleJoinRoom}
-          disabled={roomCode.length !== 6}
+          disabled={roomCode.length !== 6 || joining}
           className={`${modalBtnClasses} bg-cream text-forest hover:bg-transparent hover:text-cream disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100`}
         >
-          Join
+          {joining ? "Joining..." : "Join"}
         </button>
+        {joinError && (
+          <p className="font-benguiat text-red-400 text-sm text-center mt-3">
+            {joinError}
+          </p>
+        )}
       </Modal>
     </main>
   );
