@@ -178,6 +178,7 @@ async def room_websocket(websocket: WebSocket, room_id: str):
         room_manager.disconnect(room_id, websocket)
 
 
+<<<<<<< HEAD
 @router.post("/check-match")
 async def check_match(body: CheckMatchRequest) -> dict:
     """
@@ -188,10 +189,24 @@ async def check_match(body: CheckMatchRequest) -> dict:
     for the given room_id and round_num.
 
     Returns correct count, total, and per-guess results.
+=======
+
+@router.post("/next_round")
+async def next_round(
+    room_id: str = Form(..., description="6-digit room code"),
+    max_rounds: int = Form(1, description="Maximum number of rounds for the game"),
+) -> dict:
+    """
+    Initialize or advance to the next round.
+    - First call: creates round rows for each player (round_num=1).
+    - Subsequent calls: increments round_num for all players in the room.
+    - Randomly assigns each player a unique other player to voice-clone.
+>>>>>>> 2db9f650805ce9b952f68cd41fb11a2370089d08
     """
     if supabase is None:
         raise HTTPException(status_code=503, detail="Database not configured")
 
+<<<<<<< HEAD
     if not body.matches:
         raise HTTPException(status_code=400, detail="matches must be non-empty")
 
@@ -263,7 +278,121 @@ async def check_match(body: CheckMatchRequest) -> dict:
             "results": results,
         }
 
+=======
+    clean_room = room_id.strip()
+    if not clean_room:
+        raise HTTPException(status_code=400, detail="room_id must be non-empty")
+    if max_rounds < 1:
+        raise HTTPException(status_code=400, detail="max_rounds must be at least 1")
+
+    # Fetch the room to get the player list
+    try:
+        lobby_result = (
+            supabase.table("game_lobby")
+            .select("player_list")
+            .eq("room_id", clean_room)
+            .limit(1)
+            .execute()
+        )
+        if not lobby_result.data:
+            raise HTTPException(status_code=404, detail="Room not found")
+
+        player_list: list[str] = lobby_result.data[0].get("player_list") or []
+        if not player_list:
+            raise HTTPException(status_code=400, detail="Room has no players")
+>>>>>>> 2db9f650805ce9b952f68cd41fb11a2370089d08
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
+<<<<<<< HEAD
+=======
+
+    # Check if round rows already exist for this room
+    try:
+        existing = (
+            supabase.table("rounds")
+            .select("player, round_num")
+            .eq("room_id", clean_room)
+            .limit(1)
+            .execute()
+        )
+        round_exists = bool(existing.data)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    shuffled = player_list.copy()
+    random.shuffle(shuffled)
+    assignments = {
+        player_list[i]: shuffled[i]
+        for i in range(len(player_list))
+    }
+
+    try:
+        if not round_exists:
+            # First round — insert a row per player
+            rows = [
+                {
+                    "room_id": clean_room,
+                    "player": player,
+                    "assigned_player": assignments[player],
+                    "round_num": 1,
+                    "max_rounds": max_rounds,
+                    "round_scores": [],
+                }
+                for player in player_list
+            ]
+            result = supabase.table("rounds").insert(rows).execute()
+            if not result.data:
+                raise HTTPException(status_code=500, detail="Failed to create rounds")
+            current_round = 1
+        else:
+            # Subsequent rounds — fetch current round_num, increment, re-assign
+            current_round_result = (
+                supabase.table("rounds")
+                .select("round_num")
+                .eq("room_id", clean_room)
+                .limit(1)
+                .execute()
+            )
+            current_round = current_round_result.data[0]["round_num"] + 1
+
+            if current_round > max_rounds:
+                raise HTTPException(status_code=400, detail="All rounds already completed")
+
+            # Update each player's row with new round_num and new assignment
+            for player in player_list:
+                supabase.table("rounds").update({
+                    "round_num": current_round,
+                    "assigned_player": assignments[player],
+                }).eq("room_id", clean_room).eq("player", player).execute()
+
+            result = (
+                supabase.table("rounds")
+                .select("*")
+                .eq("room_id", clean_room)
+                .execute()
+            )
+
+        # # Broadcast to all players in the room that the next round is beginning
+        # await room_manager.broadcast(clean_room, {
+        #     "event": "next_round",
+        #     "round_num": current_round,
+        #     "max_rounds": max_rounds,
+        #     "assignments": assignments,
+        # })
+
+        return {
+            "status": "ok",
+            "room_id": clean_room,
+            "round_num": current_round,
+            "max_rounds": max_rounds,
+            "assignments": assignments,
+            "players": player_list,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    
+>>>>>>> 2db9f650805ce9b952f68cd41fb11a2370089d08

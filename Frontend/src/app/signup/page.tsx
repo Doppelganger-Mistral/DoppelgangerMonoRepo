@@ -2,12 +2,21 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
+import { useSearchParams, useRouter } from "next/navigation";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function VoiceCalibration() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const username = searchParams.get("username") ?? "";
+
   const [isRecording, setIsRecording] = useState(false);
   const [timeLeft, setTimeLeft] = useState(60);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -213,9 +222,37 @@ export default function VoiceCalibration() {
     chunksRef.current = [];
   };
 
-  const handleSubmit = () => {
-    // TODO: upload audioUrl blob to backend
-    console.log("Submitting voice recording...");
+  const handleSubmit = async () => {
+    if (!audioUrl || !username) return;
+
+    setSubmitting(true);
+    setSubmitError("");
+
+    try {
+      const response = await fetch(audioUrl);
+      const blob = await response.blob();
+
+      const formData = new FormData();
+      formData.append("username", username);
+      formData.append("audio", blob, `${username}-voice.webm`);
+
+      const res = await fetch(`${API_URL}/onboard/voices`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setSubmitError(body?.detail ?? "Failed to submit voice");
+        setSubmitting(false);
+        return;
+      }
+
+      router.push(`/lobby?username=${encodeURIComponent(username)}`);
+    } catch {
+      setSubmitError("Could not reach the server");
+      setSubmitting(false);
+    }
   };
 
   useEffect(() => {
@@ -301,11 +338,18 @@ export default function VoiceCalibration() {
             </button>
             <button
               onClick={handleSubmit}
-              className="px-6 md:px-8 lg:px-10 py-2 md:py-2.5 lg:py-3 border-[1.5px] border-cream rounded-full font-gordon text-cream text-xs md:text-sm uppercase tracking-[0.2em] cursor-pointer bg-cream text-forest shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-transparent hover:text-cream hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)]"
+              disabled={submitting}
+              className="px-6 md:px-8 lg:px-10 py-2 md:py-2.5 lg:py-3 border-[1.5px] border-cream rounded-full font-gordon text-xs md:text-sm uppercase tracking-[0.2em] cursor-pointer bg-cream text-forest shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-transparent hover:text-cream hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
             >
-              Submit
+              {submitting ? "Submitting..." : "Submit"}
             </button>
           </div>
+        )}
+
+        {submitError && (
+          <p className="font-benguiat text-red-400 text-sm md:text-base mt-3 ml-1">
+            {submitError}
+          </p>
         )}
       </div>
 

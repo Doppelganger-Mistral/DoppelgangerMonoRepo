@@ -41,7 +41,7 @@ export default function Home() {
         return;
       }
 
-      router.push("/signup");
+      router.push(`/signup?username=${encodeURIComponent(trimmed)}`);
     } catch {
       setError("Could not reach the server");
       setLoading(false);
@@ -76,7 +76,7 @@ export default function Home() {
         return;
       }
 
-      router.push("/lobby");
+      router.push(`/lobby?username=${encodeURIComponent(trimmed)}`);
     } catch {
       setError("Could not reach the server");
       setLoading(false);
