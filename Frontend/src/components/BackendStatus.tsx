@@ -50,7 +50,7 @@ export function BackendStatus() {
         <p className="font-medium text-red-600 dark:text-red-400">Backend Connection Error</p>
         <p className="text-sm text-red-500">{error}</p>
         <p className="mt-2 text-xs text-red-400">
-          Make sure your FastAPI backend is running on http://localhost:8000
+          Make sure your FastAPI backend is running on https://doppelganger-backend.vercel.app/
         </p>
       </div>
     );
