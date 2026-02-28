@@ -2,7 +2,7 @@
 
 import random
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from config import supabase
@@ -299,3 +299,93 @@ async def next_round(
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
     
+
+
+
+
+
+
+
+
+
+
+@router.get("/leaderboard")
+async def get_leaderboard(
+    room_id: str = Query(..., description="6-digit room code"),
+    round_num: int = Query(..., description="Round number to fetch scores for"),
+) -> dict:
+    """
+    Returns sorted leaderboard for a specific round.
+    Score is taken from round_scores[round_num - 1] for each player.
+    """
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    clean_room = room_id.strip()
+    if not clean_room:
+        raise HTTPException(status_code=400, detail="room_id must be non-empty")
+
+    try:
+        result = (
+            supabase.table("rounds")
+            .select("player, round_scores")
+            .eq("room_id", clean_room)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="No round data found for this room")
+
+        scores = {}
+        for row in result.data:
+            round_scores = row.get("round_scores") or []
+            idx = round_num - 1
+            score = round_scores[idx] if idx < len(round_scores) else 0
+            scores[row["player"]] = score
+
+        sorted_scores = dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+        return {"status": "ok", "round_num": round_num, "leaderboard": sorted_scores}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/leaderboard/final")
+async def get_final_leaderboard(
+    room_id: str = Query(..., description="6-digit room code"),
+) -> dict:
+    """
+    Returns sorted leaderboard with total score across all rounds.
+    """
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    clean_room = room_id.strip()
+    if not clean_room:
+        raise HTTPException(status_code=400, detail="room_id must be non-empty")
+
+    try:
+        result = (
+            supabase.table("rounds")
+            .select("player, round_scores")
+            .eq("room_id", clean_room)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="No round data found for this room")
+
+        scores = {
+            row["player"]: sum(row.get("round_scores") or [])
+            for row in result.data
+        }
+
+        sorted_scores = dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+        return {"status": "ok", "leaderboard": sorted_scores}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    
+
