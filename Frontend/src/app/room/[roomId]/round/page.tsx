@@ -46,6 +46,8 @@ function RoundPage() {
     }
   }, [searchParams]);
 
+  const isHost = players.length > 0 && players[0] === username;
+
   const [showPopup, setShowPopup] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [timeLeft, setTimeLeft] = useState(MAX_RECORD_SECONDS);
@@ -850,16 +852,18 @@ function RoundPage() {
                 >
                   Exit to Lobby
                 </button>
+              ) : isHost ? (
+                <button
+                  onClick={handleNextRound}
+                  disabled={loadingNextRound}
+                  className="w-full mt-8 px-6 py-3 border-[1.5px] border-cream rounded-full font-gordon text-sm uppercase tracking-[0.2em] cursor-pointer bg-cream text-forest shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-transparent hover:text-cream hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                >
+                  {loadingNextRound ? "Loading..." : "Next Round"}
+                </button>
               ) : (
-                <div className="flex flex-col gap-3 mt-8">
-                  <button
-                    onClick={handleNextRound}
-                    disabled={loadingNextRound}
-                    className="w-full px-6 py-3 border-[1.5px] border-cream rounded-full font-gordon text-sm uppercase tracking-[0.2em] cursor-pointer bg-cream text-forest shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-transparent hover:text-cream hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                  >
-                    {loadingNextRound ? "Loading..." : "Next Round"}
-                  </button>
-                </div>
+                <p className="font-benguiat text-cream/50 text-sm text-center mt-8">
+                  Waiting for host to start next round...
+                </p>
               )}
 
               {error && (
