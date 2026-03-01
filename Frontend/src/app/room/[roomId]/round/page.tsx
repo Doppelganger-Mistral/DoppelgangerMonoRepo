@@ -14,10 +14,16 @@ interface PlayerAudio {
   blobUrl: string;
 }
 
+function RoundPageKey() {
+  const searchParams = useSearchParams();
+  const roundNum = searchParams.get("round") ?? "1";
+  return <RoundPage key={roundNum} />;
+}
+
 export default function RoundPageWrapper() {
   return (
     <Suspense>
-      <RoundPage />
+      <RoundPageKey />
     </Suspense>
   );
 }
