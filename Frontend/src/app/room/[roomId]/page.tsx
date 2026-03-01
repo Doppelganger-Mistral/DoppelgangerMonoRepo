@@ -61,6 +61,11 @@ function RoomPage() {
     return () => { cancelled = true; };
   }, [roomId]);
 
+  const usernameRef = useRef(username);
+  usernameRef.current = username;
+  const routerRef = useRef(router);
+  routerRef.current = router;
+
   useEffect(() => {
     if (!roomId) return;
 
@@ -74,16 +79,17 @@ function RoomPage() {
           setPlayers(msg.player_list);
         }
         if (msg.event === "game_started") {
-          const assignedPlayer = msg.assignments?.[username] ?? "";
+          const currentUsername = usernameRef.current;
+          const assignedPlayer = msg.assignments?.[currentUsername] ?? "";
           const params = new URLSearchParams({
-            username,
+            username: currentUsername,
             round: String(msg.round_num),
             maxRounds: String(msg.max_rounds),
             assignedPlayer,
             players: JSON.stringify(msg.players),
             roundPrompt: msg.round_prompt ?? "",
           });
-          router.push(`/room/${roomId}/round?${params.toString()}`);
+          routerRef.current.push(`/room/${roomId}/round?${params.toString()}`);
         }
       } catch {
         // ignore malformed messages

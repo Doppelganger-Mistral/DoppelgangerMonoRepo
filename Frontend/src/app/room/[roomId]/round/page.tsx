@@ -37,7 +37,7 @@ function RoundPage() {
   const roundNum = searchParams.get("round") ?? "1";
   const maxRounds = searchParams.get("maxRounds") ?? "1";
   const assignedPlayer = searchParams.get("assignedPlayer") ?? "";
-  const roundPrompt = searchParams.get("roundPrompt") ?? "";
+  const [roundPrompt, setRoundPrompt] = useState(searchParams.get("roundPrompt") ?? "");
   const players: string[] = useMemo(() => {
     try {
       return JSON.parse(searchParams.get("players") ?? "[]");
@@ -242,6 +242,8 @@ function RoundPage() {
             next.add(msg.username);
             return next;
           });
+        } else if (msg.event === "game_started" && msg.round_prompt && Number(msg.round_num) === Number(roundNum)) {
+          setRoundPrompt(msg.round_prompt);
         } else if (msg.event === "game_started" && msg.round_num > Number(roundNum)) {
           const newAssigned = msg.assignments?.[username] ?? "";
           const params = new URLSearchParams({
