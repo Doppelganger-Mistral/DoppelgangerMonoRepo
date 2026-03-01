@@ -306,16 +306,16 @@ async def next_round(
 
             max_rounds = stored_max_rounds  # for the return value
 
+        round_prompt = await asyncio.to_thread(get_next_prompt)
+
         await room_manager.broadcast(clean_room, {
             "event": "game_started",
             "round_num": current_round,
             "max_rounds": max_rounds,
             "assignments": assignments,
             "players": player_list,
+            "round_prompt": round_prompt,
         })
-
-        # does this call need to be made async?
-        round_prompt = await asyncio.to_thread(get_next_prompt)
 
         return {
             "status": "ok",
