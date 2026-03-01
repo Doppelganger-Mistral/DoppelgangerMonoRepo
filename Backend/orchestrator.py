@@ -1,8 +1,8 @@
 import os
-import csv
 import random
 from dotenv import load_dotenv
 from mistralai import Mistral
+from config import supabase
 
 # Load environment variables
 load_dotenv()
@@ -12,25 +12,16 @@ api_key = os.getenv("MISTRAL_API_KEY")
 client = Mistral(api_key=api_key)
 MODEL = "mistral-large-latest"
 
-# --- LOAD SCENARIOS FROM CSV ---
-
-def load_combos(filepath="data_creation/final_location_scenario_combos.csv"):
-    combos = []
-    with open(filepath, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            combos.append((row["Location"].strip(), row["Scenario"].strip()))
-    return combos
-
 # --- PROMPT ---
 
 HOOK_SYSTEM_PROMPT = """You are the Game Master for a social party game where players impersonate their friends.
 
-Given a Location and Scenario, write exactly 2 sentences:
+Given a Location and Scenario, you must combine both and write exactly 2 sentences:
 - Sentence 1: one short line placing the group in an interesting situation. A scenario where a loudmouth, a pushover, and a bullshitter all answer differently. ONE detail only — don't stack.
 - "the group" or "they" only — never "you".
 - Sentence 2: a short personal question in quotes that asks the individual about their action given their predicament. 
 - Sentence 1 should be brief. If you're adding a second clause or extra detail, cut it.
+- If the Location and Scenario are disconnected or irrelevant, find a common thread to connect them.
 
 THE GOLDEN RULE: The question must place the group in a scenario where they are prompted to respond with their next action. 
 
@@ -72,24 +63,15 @@ def generate_ai_response(system_prompt, user_prompt, temperature=0.95):
         return f"[AI Generation Error]: {e}"
 
 
-# --- MAIN GAME LOOP ---
-
 def get_next_prompt():
-    # Load combos
-    try:
-        combos = load_combos()
-        print(f"Loaded {len(combos)} location/scenario combos.\n")
-    except FileNotFoundError:
-        print("ERROR: Could not find data_creation/final_location_scenario_combos.csv")
-        return
+    random_id = random.randint(1, 35001)
+    result = supabase.table("prompts").select("Location, Scenario").eq("id", random_id).execute()
+    if not result.data:
+        raise Exception("Failed to fetch prompt")
 
-    # Pick a fresh random combo
-    location, scenario = random.choice(combos)
+    location = result.data[0]["Location"]
+    scenario = result.data[0]["Scenario"]
     print(f"[Location: {location} | Scenario: {scenario}]\n")
 
-    # Generate the hook
     hook_user_prompt = f"<location>{location}</location>\n<scenario>{scenario}</scenario>\nGenerate the scene now."
-    print("Generating scenario...")
-    hook = generate_ai_response(HOOK_SYSTEM_PROMPT, hook_user_prompt)
-    print(f"\nGame Master: {hook}\n")
-    return hook
+    return generate_ai_response(HOOK_SYSTEM_PROMPT, hook_user_prompt)
