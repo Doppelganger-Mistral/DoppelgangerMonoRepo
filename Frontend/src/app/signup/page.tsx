@@ -1,12 +1,20 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { Suspense, useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export default function VoiceCalibration() {
+export default function VoiceCalibrationPage() {
+  return (
+    <Suspense>
+      <VoiceCalibration />
+    </Suspense>
+  );
+}
+
+function VoiceCalibration() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const username = searchParams.get("username") ?? "";

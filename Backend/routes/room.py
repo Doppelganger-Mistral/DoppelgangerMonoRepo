@@ -2,6 +2,7 @@
 
 import json
 import random
+import asyncio
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -333,7 +334,7 @@ async def next_round(
         })
 
         # does this call need to be made async?
-        round_prompt = get_next_prompt()
+        round_prompt = await asyncio.to_thread(get_next_prompt)
 
         return {
             "status": "ok",
@@ -342,7 +343,7 @@ async def next_round(
             "max_rounds": max_rounds,
             "assignments": assignments,
             "players": player_list,
-            "round_prompt": "placeholder. can't find API key bro",
+            "round_prompt": round_prompt,
         }
     except HTTPException:
         raise
