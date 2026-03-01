@@ -256,9 +256,18 @@ async def next_round(
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    # shuffled = player_list.copy()
+    # random.shuffle(shuffled)
+    # assignments = {player_list[i]: shuffled[i] for i in range(len(player_list))}
+
+    # Shuffle players to create a random unique assignment (circular permutation)
+    # Each player[i] is assigned player[i+1], guaranteeing no self-assignment
     shuffled = player_list.copy()
     random.shuffle(shuffled)
-    assignments = {player_list[i]: shuffled[i] for i in range(len(player_list))}
+    assignments = {
+        shuffled[i]: shuffled[(i + 1) % len(shuffled)]
+        for i in range(len(shuffled))
+    }
 
     try:
         if not round_exists:
