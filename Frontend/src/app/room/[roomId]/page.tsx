@@ -81,6 +81,7 @@ function RoomPage() {
             maxRounds: String(msg.max_rounds),
             assignedPlayer,
             players: JSON.stringify(msg.players),
+            roundPrompt: msg.round_prompt ?? "",
           });
           router.push(`/room/${roomId}/round?${params.toString()}`);
         }
@@ -125,6 +126,7 @@ function RoomPage() {
         maxRounds: String(data.max_rounds),
         assignedPlayer,
         players: JSON.stringify(data.players),
+        roundPrompt: data.round_prompt ?? "",
       });
       router.push(`/room/${roomId}/round?${params.toString()}`);
     } catch {

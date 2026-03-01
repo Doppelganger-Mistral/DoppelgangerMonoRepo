@@ -31,6 +31,7 @@ function RoundPage() {
   const roundNum = searchParams.get("round") ?? "1";
   const maxRounds = searchParams.get("maxRounds") ?? "1";
   const assignedPlayer = searchParams.get("assignedPlayer") ?? "";
+  const roundPrompt = searchParams.get("roundPrompt") ?? "";
   const players: string[] = useMemo(() => {
     try {
       return JSON.parse(searchParams.get("players") ?? "[]");
@@ -241,6 +242,7 @@ function RoundPage() {
             maxRounds: String(msg.max_rounds),
             assignedPlayer: newAssigned,
             players: JSON.stringify(msg.players),
+            roundPrompt: msg.round_prompt ?? "",
           });
           router.push(`/room/${roomId}/round?${params.toString()}`);
           router.refresh();
@@ -448,6 +450,7 @@ function RoundPage() {
         maxRounds: String(data.max_rounds),
         assignedPlayer: newAssigned,
         players: JSON.stringify(data.players),
+        roundPrompt: data.round_prompt ?? "",
       });
       router.push(`/room/${roomId}/round?${params.toString()}`);
       router.refresh();
@@ -926,10 +929,7 @@ function RoundPage() {
         <div className="w-[55%] flex flex-col">
           <div className="flex-1">
             <p className="font-benguiat text-cream/70 text-sm md:text-base lg:text-lg leading-relaxed">
-              Placeholder prompt Placeholder promptPlaceholder
-              promptPlaceholder promptPlaceholder
-              promptPlaceholder promptPlaceholder
-              promptPlaceholder prompt
+              {roundPrompt || "Record your voice impersonation below."}
             </p>
           </div>
 
