@@ -21,5 +21,7 @@ services:
         sync: false
       - key: S3_BUCKET_NAME
         sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
       - key: PYTHON_VERSION
         value: "3.11.6"
