@@ -48,9 +48,29 @@ async def create_room(body: CreateRoomRequest) -> dict:
     if max_players < 2:
         raise HTTPException(status_code=400, detail="max_players must be at least 2")
 
-    room_id = str(random.randint(100000, 999999))
-
+    # Generate a globally unique 6-digit room id by checking the DB for
+    # collisions. Retry a bounded number of times to avoid infinite loops.
+    MAX_ATTEMPTS = 1000
+    attempt = 0
+    room_id = None
     try:
+        while attempt < MAX_ATTEMPTS:
+            candidate = str(random.randint(100000, 999999))
+            exists = (
+                supabase.table("game_lobby")
+                .select("room_id")
+                .eq("room_id", candidate)
+                .limit(1)
+                .execute()
+            )
+            if not exists.data:
+                room_id = candidate
+                break
+            attempt += 1
+
+        if room_id is None:
+            raise HTTPException(status_code=500, detail="Exhausted room id space; try again later")
+
         result = supabase.table("game_lobby").insert({
             "room_id": room_id,
             "player_list": [clean_username],
@@ -325,6 +345,96 @@ async def next_round(
             "players": player_list,
             "round_prompt": round_prompt,
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+@router.post("/check-match")
+async def check_match(body: CheckMatchRequest) -> dict:
+    """
+    Check if a player's voice-matching guesses are correct.
+
+    Compares the submitted matches against the actual
+    player → assigned_player mapping in the rounds table
+    for the given room_id and round_num.
+
+    Returns correct count, total, and per-guess results.
+    """
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    if not body.matches:
+        raise HTTPException(status_code=400, detail="matches must be non-empty")
+
+    try:
+        # Each row is one player → assigned_player pair
+        result = (
+            supabase.table("rounds")
+            .select("player, assigned_player")
+            .eq("room_id", body.room_id)
+            .eq("round_num", body.round_num)
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No round found for room_id={body.room_id}, round_num={body.round_num}",
+            )
+
+        # Build actual mapping from rows: {player: assigned_player}
+        actual_mapping = {
+            row["player"]: row["assigned_player"] for row in result.data
+        }
+
+        # Compare each guess
+        results = {}
+        correct = 0
+        for player, guessed_assigned in body.matches.items():
+            actual_assigned = actual_mapping.get(player)
+            is_correct = guessed_assigned == actual_assigned
+            if is_correct:
+                correct += 1
+            results[player] = {
+                "guessed": guessed_assigned,
+                "actual": actual_assigned,
+                "correct": is_correct,
+            }
+
+        total = len(body.matches)
+        score = correct * 100
+
+        # Fetch current round_scores for this player's row
+        player_row = (
+            supabase.table("rounds")
+            .select("id, round_scores")
+            .eq("room_id", body.room_id)
+            .eq("round_num", body.round_num)
+            .eq("player", body.username.strip())
+            .limit(1)
+            .execute()
+        )
+
+        if player_row.data:
+            row = player_row.data[0]
+            existing_scores = row.get("round_scores") or []
+            existing_scores.append(score)
+            supabase.table("rounds").update(
+                {"round_scores": existing_scores}
+            ).eq("id", row["id"]).execute()
+
+        return {
+            "status": "ok",
+            "room_id": body.room_id,
+            "round_num": body.round_num,
+            "username": body.username.strip(),
+            "correct": correct,
+            "total": total,
+            "score": score,
+            "results": results,
+        }
+
     except HTTPException:
         raise
     except Exception as e:

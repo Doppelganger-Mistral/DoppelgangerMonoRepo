@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useRef, useEffect, useMemo, useCallback } from "react";
 import Image from "next/image";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const WS_URL = API_URL.replace(/^http/, "ws");
@@ -25,6 +25,7 @@ export default function RoundPageWrapper() {
 function RoundPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   const username = searchParams.get("username") ?? "";
   const roundNum = searchParams.get("round") ?? "1";
@@ -43,11 +44,32 @@ function RoundPage() {
   const [timeLeft, setTimeLeft] = useState(MAX_RECORD_SECONDS);
   const [converting, setConverting] = useState(false);
   const [donePlayers, setDonePlayers] = useState<Set<string>>(new Set());
+  const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [myDone, setMyDone] = useState(false);
-  const [phase, setPhase] = useState<"recording" | "playback">("recording");
+  const [phase, setPhase] = useState<"recording" | "playback" | "guessing" | "results">("recording");
   const [allAudios, setAllAudios] = useState<PlayerAudio[]>([]);
   const [currentlyPlaying, setCurrentlyPlaying] = useState(-1);
   const [error, setError] = useState("");
+
+  // Guessing phase
+  const [guesses, setGuesses] = useState<Record<string, string>>({});
+  const [selectedLeft, setSelectedLeft] = useState<string | null>(null);
+  const [submittingGuess, setSubmittingGuess] = useState(false);
+
+  // Results phase
+  const [scoreResults, setScoreResults] = useState<{
+    correct: number;
+    total: number;
+    score: number;
+    results: Record<string, { guessed: string; actual: string; correct: boolean }>;
+  } | null>(null);
+  const [leaderboard, setLeaderboard] = useState<Record<string, number>>({});
+  const [finalLeaderboard, setFinalLeaderboard] = useState<Record<string, number>>({});
+  const [showLeaderboardPopup, setShowLeaderboardPopup] = useState(false);
+  const [isFinalRound, setIsFinalRound] = useState(false);
+  const [loadingNextRound, setLoadingNextRound] = useState(false);
+  const [doneGuessPlayers, setDoneGuessPlayers] = useState<Set<string>>(new Set());
+  const [waitingForGuesses, setWaitingForGuesses] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -55,6 +77,10 @@ function RoundPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const animFrameRef = useRef<number>(0);
 
   const stopRecordingCleanup = useCallback(() => {
     if (timerRef.current) {
@@ -195,6 +221,29 @@ function RoundPage() {
             next.add(msg.username);
             return next;
           });
+          if (msg.assignedPlayer) {
+            setAssignments((prev) => ({
+              ...prev,
+              [msg.username]: msg.assignedPlayer,
+            }));
+          }
+        } else if (msg.event === "guessing_done" && msg.username) {
+          setDoneGuessPlayers((prev) => {
+            const next = new Set(prev);
+            next.add(msg.username);
+            return next;
+          });
+        } else if (msg.event === "game_started" && msg.round_num > Number(roundNum)) {
+          const newAssigned = msg.assignments?.[username] ?? "";
+          const params = new URLSearchParams({
+            username,
+            round: String(msg.round_num),
+            maxRounds: String(msg.max_rounds),
+            assignedPlayer: newAssigned,
+            players: JSON.stringify(msg.players),
+          });
+          router.push(`/room/${roomId}/round?${params.toString()}`);
+          router.refresh();
         }
       } catch {
         // ignore
@@ -205,7 +254,7 @@ function RoundPage() {
       ws.close();
       wsRef.current = null;
     };
-  }, [roomId]);
+  }, [roomId, roundNum, username, router]);
 
   // Check if all players are done → transition to playback
   useEffect(() => {
@@ -225,7 +274,7 @@ function RoundPage() {
               const blob = await res.blob();
               audios.push({
                 player,
-                assignedPlayer: "",
+                assignedPlayer: assignments[player] ?? player,
                 blobUrl: URL.createObjectURL(blob),
               });
             }
@@ -235,38 +284,130 @@ function RoundPage() {
         }
         setAllAudios(audios);
         setPhase("playback");
+        setCurrentlyPlaying(0);
       };
       fetchAllAudios();
     }
-  }, [donePlayers, players, phase, roomId, roundNum]);
+  }, [donePlayers, players, phase, roomId, roundNum, assignments]);
 
-  // Auto-play audios sequentially
+  // All players guessed → fetch leaderboard and show popup
   useEffect(() => {
-    if (phase !== "playback" || allAudios.length === 0) return;
-    if (currentlyPlaying === -1) {
-      setCurrentlyPlaying(0);
+    if (
+      players.length > 0 &&
+      doneGuessPlayers.size >= players.length &&
+      waitingForGuesses
+    ) {
+      const fetchLeaderboard = async () => {
+        const finalRound = Number(roundNum) >= Number(maxRounds);
+        if (finalRound) {
+          const flbRes = await fetch(
+            `${API_URL}/room/leaderboard/final?room_id=${encodeURIComponent(roomId)}`
+          );
+          if (flbRes.ok) {
+            const flbData = await flbRes.json();
+            setFinalLeaderboard(flbData.leaderboard ?? {});
+          }
+        } else {
+          const lbRes = await fetch(
+            `${API_URL}/room/leaderboard?room_id=${encodeURIComponent(roomId)}&round_num=${encodeURIComponent(roundNum)}`
+          );
+          if (lbRes.ok) {
+            const lbData = await lbRes.json();
+            setLeaderboard(lbData.leaderboard ?? {});
+          }
+        }
+        setWaitingForGuesses(false);
+        setShowLeaderboardPopup(true);
+      };
+      fetchLeaderboard();
     }
-  }, [phase, allAudios, currentlyPlaying]);
+  }, [doneGuessPlayers, players, waitingForGuesses, roomId, roundNum, maxRounds]);
+
+  const drawWaveform = useCallback(() => {
+    const canvas = canvasRef.current;
+    const analyser = analyserRef.current;
+    if (!canvas || !analyser) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const draw = () => {
+      animFrameRef.current = requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(dataArray);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const barCount = 40;
+      const barWidth = Math.floor(canvas.width / (barCount * 2));
+      const gap = barWidth * 0.5;
+      const totalWidth = barCount * barWidth + (barCount - 1) * gap;
+      const startX = (canvas.width - totalWidth) / 2;
+
+      for (let i = 0; i < barCount; i++) {
+        const dataIndex = Math.floor((i * bufferLength) / barCount);
+        const value = dataArray[dataIndex];
+        const barHeight = Math.max(2, (value / 255) * canvas.height * 0.85);
+
+        const x = startX + i * (barWidth + gap);
+        const y = (canvas.height - barHeight) / 2;
+
+        ctx.fillStyle = "rgba(213, 206, 196, 0.7)";
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, barHeight, 1);
+        ctx.fill();
+      }
+    };
+
+    draw();
+  }, []);
+
+  const stopWaveform = useCallback(() => {
+    cancelAnimationFrame(animFrameRef.current);
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }, []);
 
   useEffect(() => {
     if (phase !== "playback" || currentlyPlaying < 0 || currentlyPlaying >= allAudios.length) return;
 
+    stopWaveform();
+    audioCtxRef.current?.close();
+
     const audio = new Audio(allAudios[currentlyPlaying].blobUrl);
     playbackAudioRef.current = audio;
 
+    const actx = new AudioContext();
+    const source = actx.createMediaElementSource(audio);
+    const analyser = actx.createAnalyser();
+    analyser.fftSize = 128;
+    analyser.smoothingTimeConstant = 0.8;
+    source.connect(analyser);
+    analyser.connect(actx.destination);
+
+    analyserRef.current = analyser;
+    audioCtxRef.current = actx;
+
     audio.onended = () => {
+      stopWaveform();
       setCurrentlyPlaying((prev) =>
         prev + 1 < allAudios.length ? prev + 1 : -2
       );
     };
 
-    audio.play().catch(() => {});
+    audio.play().then(() => drawWaveform()).catch(() => {});
 
     return () => {
       audio.pause();
       audio.onended = null;
+      stopWaveform();
     };
-  }, [currentlyPlaying, phase, allAudios]);
+  }, [currentlyPlaying, phase, allAudios, drawWaveform, stopWaveform]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -274,40 +415,171 @@ function RoundPage() {
       if (timerRef.current) clearInterval(timerRef.current);
       mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
       if (playbackAudioRef.current) playbackAudioRef.current.pause();
+      cancelAnimationFrame(animFrameRef.current);
+      audioCtxRef.current?.close();
     };
   }, []);
 
   const formatTime = (s: number) => `0:${s.toString().padStart(2, "0")}`;
 
+  const handleNextRound = async () => {
+    setLoadingNextRound(true);
+    try {
+      const formData = new FormData();
+      formData.append("room_id", roomId);
+
+      const res = await fetch(`${API_URL}/room/next_round`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.detail ?? "Failed to start next round");
+        setLoadingNextRound(false);
+        return;
+      }
+
+      const data = await res.json();
+      const newAssigned = data.assignments?.[username] ?? "";
+      const params = new URLSearchParams({
+        username,
+        round: String(data.round_num),
+        maxRounds: String(data.max_rounds),
+        assignedPlayer: newAssigned,
+        players: JSON.stringify(data.players),
+      });
+      router.push(`/room/${roomId}/round?${params.toString()}`);
+      router.refresh();
+    } catch {
+      setError("Could not reach the server");
+      setLoadingNextRound(false);
+    }
+  };
+
+  const doppelgangerNames = allAudios.map((a) => a.assignedPlayer);
+
+  const handleGuessMatch = (doppelName: string) => {
+    if (selectedLeft === null) {
+      setSelectedLeft(doppelName);
+      return;
+    }
+    if (selectedLeft === doppelName) {
+      setSelectedLeft(null);
+      return;
+    }
+    setSelectedLeft(null);
+  };
+
+  const handleOriginalMatch = (playerName: string) => {
+    if (!selectedLeft) return;
+    setGuesses((prev) => {
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(next)) {
+        if (v === selectedLeft) delete next[k];
+      }
+      next[playerName] = selectedLeft;
+      return next;
+    });
+    setSelectedLeft(null);
+  };
+
+  const removeGuess = (playerName: string) => {
+    setGuesses((prev) => {
+      const next = { ...prev };
+      delete next[playerName];
+      return next;
+    });
+  };
+
+  const submitGuesses = async () => {
+    if (Object.keys(guesses).length !== players.length) return;
+
+    setSubmittingGuess(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_URL}/room/check-match`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room_id: roomId,
+          round_num: Number(roundNum),
+          username,
+          matches: guesses,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.detail ?? "Failed to submit guesses");
+        setSubmittingGuess(false);
+        return;
+      }
+
+      const data = await res.json();
+      setScoreResults({
+        correct: data.correct,
+        total: data.total,
+        score: data.score,
+        results: data.results,
+      });
+
+      setIsFinalRound(Number(roundNum) >= Number(maxRounds));
+
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({ event: "guessing_done", username })
+        );
+      }
+      setDoneGuessPlayers((prev) => {
+        const next = new Set(prev);
+        next.add(username);
+        return next;
+      });
+
+      setSubmittingGuess(false);
+      setPhase("results");
+      setWaitingForGuesses(true);
+    } catch {
+      setError("Could not reach the server");
+      setSubmittingGuess(false);
+    }
+  };
+
   // ─── Playback phase ───
   if (phase === "playback") {
     return (
-      <main className="flex flex-col min-h-screen bg-forest px-8 md:px-16 lg:px-24 py-10 md:py-16">
-        <div className="flex justify-center">
-          <Image
-            src="/titlefont.svg"
-            alt="Doppelgänger"
-            width={800}
-            height={160}
-            className="w-[70vw] max-w-[650px] h-auto drop-shadow-[0_3px_6px_rgba(0,0,0,0.5)]"
-            priority
-          />
-        </div>
+      <main className="flex flex-col min-h-screen bg-forest px-8 md:px-16 lg:px-24 py-10 md:py-16 items-center">
+        <Image
+          src="/titlefont.svg"
+          alt="Doppelgänger"
+          width={800}
+          height={160}
+          className="w-[70vw] max-w-[650px] h-auto drop-shadow-[0_3px_6px_rgba(0,0,0,0.5)]"
+          priority
+        />
 
-        <div className="flex justify-end mt-6 md:mt-10">
-          <h2 className="font-gordon text-cream text-xl md:text-2xl lg:text-3xl uppercase tracking-[0.15em]">
-            Round {roundNum} — Playback
-          </h2>
-        </div>
+        <h2 className="font-gordon text-cream text-xl md:text-2xl lg:text-3xl uppercase tracking-[0.15em] mt-8 md:mt-12 text-center">
+          Round {roundNum} — Playback
+        </h2>
 
-        <div className="flex flex-col gap-6 mt-10 md:mt-14 max-w-2xl mx-auto w-full">
+        {/* Waveform canvas */}
+        <canvas
+          ref={canvasRef}
+          width={500}
+          height={80}
+          className="w-full max-w-2xl mt-8"
+        />
+
+        <div className="flex flex-col gap-5 mt-6 md:mt-8 max-w-2xl w-full">
           {allAudios.map((entry, idx) => {
             const isActive = idx === currentlyPlaying;
             const isPlayed = currentlyPlaying === -2 || (currentlyPlaying >= 0 && idx < currentlyPlaying);
             return (
               <div
                 key={entry.player}
-                className={`flex items-center gap-6 px-6 py-4 rounded-xl border-[1.5px] transition-all duration-300 ${
+                className={`flex items-center gap-5 px-6 py-4 rounded-xl border-[1.5px] transition-all duration-300 ${
                   isActive
                     ? "border-white bg-cream/10 shadow-[0_0_20px_rgba(213,206,196,0.15)]"
                     : isPlayed
@@ -326,7 +598,7 @@ function RoundPage() {
                 </div>
                 <div className="flex-1">
                   <p className="font-gordon text-cream text-base md:text-lg uppercase tracking-[0.1em]">
-                    Cloned as {entry.player}
+                    {entry.assignedPlayer}
                   </p>
                 </div>
                 <button
@@ -335,6 +607,7 @@ function RoundPage() {
                       playbackAudioRef.current.pause();
                       playbackAudioRef.current.onended = null;
                     }
+                    stopWaveform();
                     setCurrentlyPlaying(idx);
                   }}
                   className="px-4 py-1.5 border border-cream/40 rounded-full font-gordon text-cream text-xs uppercase tracking-wider hover:bg-cream/10 transition-colors cursor-pointer"
@@ -345,6 +618,249 @@ function RoundPage() {
             );
           })}
         </div>
+
+        <button
+          onClick={() => {
+            if (playbackAudioRef.current) {
+              playbackAudioRef.current.pause();
+              playbackAudioRef.current.onended = null;
+            }
+            stopWaveform();
+            setPhase("guessing");
+          }}
+          className="mt-10 px-10 md:px-14 py-3 md:py-3.5 border-[1.5px] border-cream rounded-full font-gordon text-cream text-sm md:text-base uppercase tracking-[0.2em] cursor-pointer bg-transparent shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-cream hover:text-forest hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)]"
+        >
+          Start Guessing
+        </button>
+      </main>
+    );
+  }
+
+  // ─── Guessing phase ───
+  if (phase === "guessing") {
+    const matchedDoppels = new Set(Object.values(guesses));
+
+    return (
+      <main className="flex flex-col min-h-screen bg-forest px-8 md:px-16 lg:px-24 py-10 md:py-16 items-center">
+        <Image
+          src="/titlefont.svg"
+          alt="Doppelgänger"
+          width={800}
+          height={160}
+          className="w-[70vw] max-w-[650px] h-auto drop-shadow-[0_3px_6px_rgba(0,0,0,0.5)]"
+          priority
+        />
+
+        <h2 className="font-gordon text-cream text-xl md:text-2xl lg:text-3xl uppercase tracking-[0.15em] mt-8 text-center">
+          Round {roundNum}
+        </h2>
+
+        <div className="flex gap-8 md:gap-16 lg:gap-24 mt-10 md:mt-14 w-full max-w-3xl justify-center">
+          {/* Left: Doppelganger voices */}
+          <div className="flex flex-col items-center gap-2">
+            <h3 className="font-gordon text-cream text-sm md:text-base uppercase tracking-[0.2em] mb-4">
+              Doppelganger
+            </h3>
+            <div className="flex flex-col gap-4">
+              {doppelgangerNames.map((name) => {
+                const isUsed = matchedDoppels.has(name);
+                const isSelected = selectedLeft === name;
+                return (
+                  <button
+                    key={name}
+                    onClick={() => handleGuessMatch(name)}
+                    className={`px-6 py-3 rounded-lg border-[1.5px] font-benguiat text-base md:text-lg transition-all duration-200 cursor-pointer ${
+                      isSelected
+                        ? "border-white bg-cream/20 text-white scale-105"
+                        : isUsed
+                        ? "border-cream/30 text-cream/40"
+                        : "border-cream/60 text-cream hover:border-white hover:bg-cream/10"
+                    }`}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Center: Connection lines */}
+          <div className="flex flex-col justify-center gap-4 min-w-[60px]">
+            {players.map((player) => {
+              const matched = guesses[player];
+              return (
+                <div key={player} className="h-[52px] flex items-center justify-center">
+                  {matched ? (
+                    <svg width="60" height="2" className="opacity-60">
+                      <line x1="0" y1="1" x2="60" y2="1" stroke="#a8d5ba" strokeWidth="2" />
+                    </svg>
+                  ) : (
+                    <span className="block w-2 h-2 rounded-full border border-cream/20" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Right: Original players */}
+          <div className="flex flex-col items-center gap-2">
+            <h3 className="font-gordon text-cream text-sm md:text-base uppercase tracking-[0.2em] mb-4">
+              Original
+            </h3>
+            <div className="flex flex-col gap-4">
+              {players.map((player) => {
+                const matched = guesses[player];
+                return (
+                  <button
+                    key={player}
+                    onClick={() => {
+                      if (matched) {
+                        removeGuess(player);
+                      } else {
+                        handleOriginalMatch(player);
+                      }
+                    }}
+                    className={`px-6 py-3 rounded-lg border-[1.5px] font-benguiat text-base md:text-lg transition-all duration-200 cursor-pointer ${
+                      matched
+                        ? "border-green-400/60 text-green-300/80 bg-green-900/20"
+                        : selectedLeft
+                        ? "border-cream/60 text-cream hover:border-white hover:bg-cream/10 animate-pulse"
+                        : "border-cream/60 text-cream hover:border-white hover:bg-cream/10"
+                    }`}
+                  >
+                    {matched ? `${matched} → ${player}` : player}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {selectedLeft && (
+          <p className="font-benguiat text-cream/50 text-sm mt-6 animate-pulse">
+            Now click an original player to match with {selectedLeft}
+          </p>
+        )}
+
+        {error && (
+          <p className="font-benguiat text-red-400 text-sm mt-4">{error}</p>
+        )}
+
+        <button
+          onClick={submitGuesses}
+          disabled={Object.keys(guesses).length !== players.length || submittingGuess}
+          className="mt-10 px-10 md:px-14 py-3 md:py-3.5 border-[1.5px] border-cream rounded-full font-gordon text-sm md:text-base uppercase tracking-[0.2em] cursor-pointer bg-cream text-forest shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-transparent hover:text-cream hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-cream disabled:hover:text-forest"
+        >
+          {submittingGuess ? "Submitting..." : "Submit Guesses"}
+        </button>
+      </main>
+    );
+  }
+
+  // ─── Results phase ───
+  if (phase === "results" && scoreResults) {
+    const allGuessed = doneGuessPlayers.size >= players.length;
+    const displayLeaderboard = isFinalRound ? finalLeaderboard : leaderboard;
+
+    return (
+      <main className="flex flex-col min-h-screen bg-forest px-8 md:px-16 lg:px-24 py-10 md:py-16 items-center">
+        <Image
+          src="/titlefont.svg"
+          alt="Doppelgänger"
+          width={800}
+          height={160}
+          className="w-[70vw] max-w-[650px] h-auto drop-shadow-[0_3px_6px_rgba(0,0,0,0.5)]"
+          priority
+        />
+
+        <h2 className="font-gordon text-cream text-xl md:text-2xl lg:text-3xl uppercase tracking-[0.15em] mt-8 text-center">
+          Round {roundNum} — Guesses Submitted
+        </h2>
+
+        <div className="mt-8 text-center">
+          <p className="font-gordon text-cream text-4xl md:text-5xl">
+            {scoreResults.correct}/{scoreResults.total}
+          </p>
+          <p className="font-benguiat text-cream/60 text-base md:text-lg mt-2">
+            correct guesses — {scoreResults.score} points
+          </p>
+        </div>
+
+        {!allGuessed && (
+          <div className="mt-10 flex flex-col items-center gap-4">
+            <div className="w-8 h-8 border-2 border-cream/30 border-t-cream rounded-full animate-spin" />
+            <p className="font-benguiat text-cream/60 text-base">
+              Waiting for other players to finish guessing ({doneGuessPlayers.size}/{players.length})...
+            </p>
+          </div>
+        )}
+
+        {/* Leaderboard Popup */}
+        {showLeaderboardPopup && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div
+              className="bg-forest border-[1.5px] border-cream rounded-2xl p-8 md:p-10 w-[90%] max-w-md shadow-[0_8px_40px_rgba(0,0,0,0.6)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2
+                className="font-gordon text-cream uppercase text-center drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)]"
+                style={{ fontSize: "clamp(1.3rem, 2.5vw, 2rem)" }}
+              >
+                {isFinalRound ? "Final Leaderboard" : `Round ${roundNum} Leaderboard`}
+              </h2>
+
+              <div className="flex flex-col gap-2 mt-6">
+                {Object.entries(displayLeaderboard).map(([player, score], idx) => (
+                  <div
+                    key={player}
+                    className={`flex items-center justify-between px-5 py-3 rounded-lg border-[1.5px] ${
+                      idx === 0
+                        ? "border-cream/60 bg-cream/10"
+                        : "border-cream/20"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="font-gordon text-cream/50 text-sm w-6">
+                        {idx + 1}.
+                      </span>
+                      <p className={`font-benguiat text-sm md:text-base ${player === username ? "text-white" : "text-cream/80"}`}>
+                        {player}
+                      </p>
+                    </div>
+                    <p className="font-gordon text-cream text-sm md:text-base">
+                      {score} pts
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {isFinalRound ? (
+                <button
+                  onClick={() => router.push(`/lobby?username=${encodeURIComponent(username)}`)}
+                  className="w-full mt-8 px-6 py-3 border-[1.5px] border-cream rounded-full font-gordon text-sm uppercase tracking-[0.2em] cursor-pointer bg-cream text-forest shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-transparent hover:text-cream hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)]"
+                >
+                  Exit to Lobby
+                </button>
+              ) : (
+                <div className="flex flex-col gap-3 mt-8">
+                  <button
+                    onClick={handleNextRound}
+                    disabled={loadingNextRound}
+                    className="w-full px-6 py-3 border-[1.5px] border-cream rounded-full font-gordon text-sm uppercase tracking-[0.2em] cursor-pointer bg-cream text-forest shadow-[0_4px_12px_rgba(0,0,0,0.4)] transition-all duration-300 ease-out hover:bg-transparent hover:text-cream hover:scale-105 hover:shadow-[0_6px_20px_rgba(0,0,0,0.5)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                  >
+                    {loadingNextRound ? "Loading..." : "Next Round"}
+                  </button>
+                </div>
+              )}
+
+              {error && (
+                <p className="font-benguiat text-red-400 text-sm text-center mt-3">
+                  {error}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
       </main>
     );
   }
